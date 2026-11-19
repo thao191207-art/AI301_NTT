@@ -150,10 +150,12 @@ def load_sample_dataset(dataset_key: str) -> Tuple[pd.DataFrame, Dict[str, Any]]
         data_dir = 'data'
         
     if dataset_key == 'marketing_sales' or dataset_key == 'doanh_thu_marketing':
-        path = os.path.join(data_dir, 'doanh_thu_marketing.csv')
+        candidates = ['data/doanh_thu_marketing.csv', 'doanh_thu_marketing.csv', os.path.join(base_dir, 'data', 'doanh_thu_marketing.csv')]
+        path = next((c for c in candidates if os.path.exists(c)), 'data/doanh_thu_marketing.csv')
         display_name = 'Doanh thu và marketing'
     elif dataset_key == 'retail_logistics' or dataset_key == 'ban_le_logistics':
-        path = os.path.join(data_dir, 'ban_le_logistics.csv')
+        candidates = ['data/ban_le_logistics.csv', 'ban_le_logistics.csv', os.path.join(base_dir, 'data', 'ban_le_logistics.csv')]
+        path = next((c for c in candidates if os.path.exists(c)), 'data/ban_le_logistics.csv')
         display_name = 'Bán lẻ đa kênh & Logistics'
     else:
         raise ValueError(f"Không tìm thấy tập dữ liệu mẫu: '{dataset_key}'")

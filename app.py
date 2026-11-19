@@ -9,16 +9,28 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import numpy as np
 
-from core.data_loader import (
-    load_data_from_bytes,
-    load_google_sheet_by_url,
-    load_sample_dataset
-)
-from core.cleaner import DataCleaner
-from core.analyzer import DataAnalyzer
-from core.reporter import ReportEngine
-from core.exporter import export_to_csv, export_to_excel, export_to_pdf
-from core.ai_assistant import query_llm_business_advisor
+try:
+    from core.data_loader import (
+        load_data_from_bytes,
+        load_google_sheet_by_url,
+        load_sample_dataset
+    )
+    from core.cleaner import DataCleaner
+    from core.analyzer import DataAnalyzer
+    from core.reporter import ReportEngine
+    from core.exporter import export_to_csv, export_to_excel, export_to_pdf
+    from core.ai_assistant import query_llm_business_advisor
+except ImportError:
+    from data_loader import (
+        load_data_from_bytes,
+        load_google_sheet_by_url,
+        load_sample_dataset
+    )
+    from cleaner import DataCleaner
+    from analyzer import DataAnalyzer
+    from reporter import ReportEngine
+    from exporter import export_to_csv, export_to_excel, export_to_pdf
+    from ai_assistant import query_llm_business_advisor
 
 app = FastAPI(title="Không gian phân tích", version="1.0.0")
 
@@ -440,16 +452,55 @@ def reset_workspace():
     session.reset()
     return {'success': True, 'message': 'Đã làm mới không gian phân tích.'}
 
-# Serve static directory
-app.mount("/static", StaticFiles(directory="static"), name="static")
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+if not os.path.exists(STATIC_DIR):
+    STATIC_DIR = os.path.join(BASE_DIR, "public", "static")
+
+# -------------------------------------------------------------
+# Static files and root index serving
+# -------------------------------------------------------------
+
+@app.get("/static/style.css")
+@app.get("/style.css")
+def serve_css():
+    for p in ["static/style.css", "public/static/style.css", "style.css"]:
+        full_p = os.path.join(BASE_DIR, p) if not os.path.isabs(p) else p
+        if os.path.exists(full_p):
+            return FileResponse(full_p, media_type="text/css")
+        if os.path.exists(p):
+            return FileResponse(p, media_type="text/css")
+    raise HTTPException(status_code=404, detail="CSS file not found")
+
+@app.get("/static/app.js")
+@app.get("/app.js")
+def serve_js():
+    for p in ["static/app.js", "public/static/app.js", "app.js"]:
+        full_p = os.path.join(BASE_DIR, p) if not os.path.isabs(p) else p
+        if os.path.exists(full_p):
+            return FileResponse(full_p, media_type="application/javascript")
+        if os.path.exists(p):
+            return FileResponse(p, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="JS file not found")
+
+@app.get("/static/{file_path:path}")
+def get_static_file(file_path: str):
+    for candidate in [os.path.join(STATIC_DIR, file_path), os.path.join(BASE_DIR, file_path), file_path]:
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            media_type = "text/css" if file_path.endswith(".css") else ("application/javascript" if file_path.endswith(".js") else None)
+            return FileResponse(candidate, media_type=media_type)
+    raise HTTPException(status_code=404, detail="File not found")
 
 @app.get("/", response_class=HTMLResponse)
 def serve_index():
-    index_path = os.path.join("static", "index.html")
-    if os.path.exists(index_path):
-        with open(index_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h1>Không gian phân tích (Analysis Workspace)</h1><p>Ứng dụng đang tải...</p>"
+    for candidate in [os.path.join(STATIC_DIR, "index.html"), os.path.join(BASE_DIR, "index.html"), "index.html", "static/index.html"]:
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            with open(candidate, "r", encoding="utf-8") as f:
+                return f.read()
+    return "<h1>Không gian phân tích (Analysis Workspace)</h1><p>Đang tải ứng dụng...</p>"
 
 if __name__ == '__main__':
     import uvicorn
