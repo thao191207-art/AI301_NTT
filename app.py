@@ -225,7 +225,42 @@ def complete_step_1():
 # Step 2: Clean and Normalize APIs
 # -------------------------------------------------------------
 
+@app.get("/api/connect/ai-suggestions")
+def get_ai_suggestions():
+    """Generate 3-5 core business questions directly from the raw data profile."""
+    if session.cleaned_df is None or session.cleaned_df.empty:
+        return {'available': False, 'message': 'Tải dữ liệu lên để AI gợi ý câu hỏi phân tích.', 'suggestions': []}
+    try:
+        analyzer = DataAnalyzer(session.cleaned_df, session.column_roles, session.business_context)
+        suggestions = analyzer.generate_ai_core_suggestions()
+        return {'available': True, 'suggestions': suggestions}
+    except Exception as e:
+        return {'available': False, 'message': str(e), 'suggestions': []}
+
+@app.get("/api/clean/mapping")
+def get_column_mapping_table():
+    """Return visible column mapping details table with role, status, sample value and formula."""
+    if session.cleaner is None:
+        raise HTTPException(status_code=400, detail="Chưa tải tập dữ liệu.")
+    mapping_details = session.cleaner.get_column_mapping_details(session.column_roles)
+    return {
+        'details': mapping_details,
+        'mapping_table': mapping_details,
+        'column_roles': session.column_roles
+    }
+
 @app.get("/api/clean/issues")
+
+@app.get("/api/report/issues")
+def get_report_issues(month: Optional[str] = Query(None)):
+    """Return Section 4 Block I 'Issues to Resolve' table."""
+    if session.report_engine is None:
+        if session.cleaned_df is not None:
+            session.report_engine = ReportEngine(session.cleaned_df, session.column_roles, session.business_context)
+        else:
+            raise HTTPException(status_code=400, detail="Chưa hoàn thành phân tích dữ liệu.")
+    dash = session.report_engine.compute_dashboard(selected_ym=month)
+    return dash.get('issues_to_resolve', {'issues': [], 'footnote': ''})
 def get_clean_issues():
     """Get detected quality issues in current dataframe."""
     if session.cleaner is None:

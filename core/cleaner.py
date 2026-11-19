@@ -26,7 +26,6 @@ class DataCleaner:
         
         # 1. Missing values
         for col in df.columns:
-            # Treat empty strings or whitespace-only as missing
             is_empty_str = df[col].astype(str).str.strip().isin(['', 'nan', 'null', 'None', 'NA', 'N/A'])
             missing_count = int(df[col].isna().sum() + is_empty_str.sum())
             if missing_count > 0:
@@ -39,26 +38,23 @@ class DataCleaner:
         if issues['duplicates_count'] > 0:
             issues['summary_count'] += 1
             
-        # 2. Check each column for numeric-in-text, dates, and casing
+        # 2. Check each column
         for col in df.columns:
             series = df[col].dropna().astype(str).str.strip()
             if series.empty:
                 continue
                 
-            # Check numeric as text
-            # E.g. contains currency symbols (đ, $, €), %, commas or dots used as thousand separators
+            # Check numeric as text with currency/symbols
             num_pattern_count = 0
             sample_non_num = 0
             for val in series.head(100):
                 v = val.strip()
                 if not v:
                     continue
-                # check if has symbols but is essentially numeric
                 cleaned_v = re.sub(r'[\sđ₫$€£%]', '', v)
-                # replace Vietnamese thousand separator (dot) or comma
                 if re.match(r'^-?\d{1,3}([.,]\d{3})+([.,]\d+)?$', cleaned_v) or \
                    re.match(r'^-?\d+([.,]\d+)?%$', v) or \
-                   (any(sym in v for sym in ['đ', '₫', '$', '€', 'đ/']) and re.search(r'\d', v)):
+                   (any(sym in v for sym in ['đ', '₫', '$', '€']) and re.search(r'\d', v)):
                     num_pattern_count += 1
                 elif not v.replace('.', '', 1).replace('-', '', 1).isdigit():
                     sample_non_num += 1
@@ -71,7 +67,6 @@ class DataCleaner:
                 issues['summary_count'] += 1
                 
             # Check date formats
-            # Look for date-like strings
             date_matches = 0
             formats_found = set()
             for val in series.head(50):
@@ -93,8 +88,7 @@ class DataCleaner:
                 }
                 issues['summary_count'] += 1
                 
-            # Check whitespace and casing in categorical columns
-            # only for non-numeric, non-date
+            # Check whitespace and casing in text columns
             if col not in issues['numeric_as_text'] and date_matches < 10:
                 has_whitespace = series.str.contains(r'^\s+|\s+$|\s{2,}', regex=True).sum()
                 unique_vals = series.unique()
@@ -150,9 +144,7 @@ class DataCleaner:
             custom_val = params.get('value', 0)
             if column and column in self.df.columns:
                 series = self.df[column].replace(['', 'nan', 'null', 'None', 'NA', 'N/A'], np.nan)
-                fill_val = None
-                
-                # Check if column is numeric
+                fill_val = 0
                 numeric_series = pd.to_numeric(series.astype(str).str.replace(r'[\sđ₫$€£%,]', '', regex=True), errors='coerce')
                 
                 if method == 'mean' and not numeric_series.dropna().empty:
@@ -166,8 +158,6 @@ class DataCleaner:
                     fill_val = 0
                 elif method == 'custom':
                     fill_val = custom_val
-                else:
-                    fill_val = 0
                     
                 missing_cnt = int(series.isna().sum())
                 self.df[column] = series.fillna(fill_val)
@@ -182,18 +172,15 @@ class DataCleaner:
                 
         elif action_type == 'standardize_numeric':
             if column and column in self.df.columns:
-                # Clean currency, spaces, comma/dots
                 def clean_num(val):
                     if pd.isna(val):
                         return np.nan
                     v = str(val).strip()
-                    if not v or v in ['nan', 'null', 'None']:
+                    if not v or v.lower() in ['nan', 'null', 'none']:
                         return np.nan
                     is_pct = '%' in v
-                    # remove symbols
                     v = re.sub(r'[\sđ₫$€£]', '', v)
                     v = v.replace('%', '')
-                    # If formatted like 1.234.567 or 1,234,567
                     if re.match(r'^-?\d{1,3}(\.\d{3})+(,\d+)?$', v):
                         v = v.replace('.', '').replace(',', '.')
                     elif re.match(r'^-?\d{1,3}(,\d{3})+(\.\d+)?$', v):
@@ -231,10 +218,9 @@ class DataCleaner:
                 details_vi = f"Đã thống nhất định dạng ngày về chuẩn {target_fmt}."
                 
         elif action_type == 'trim_and_case':
-            case_type = params.get('case', 'trim')  # 'trim', 'title', 'upper', 'lower'
+            case_type = params.get('case', 'trim')
             if column and column in self.df.columns:
                 s = self.df[column].astype(str).str.strip()
-                # replace multiple spaces with single space
                 s = s.str.replace(r'\s+', ' ', regex=True)
                 if case_type == 'title':
                     s = s.str.title()
@@ -270,24 +256,19 @@ class DataCleaner:
     def auto_clean_all(self) -> List[Dict[str, Any]]:
         """Automatically clean common obvious issues: remove duplicates, trim whitespace, standardize numbers/dates."""
         logs = []
-        # 1. Duplicates
         if self.df.duplicated().sum() > 0:
             logs.append(self.apply_action('drop_duplicates'))
             
-        # 2. Inspect and fix numeric columns
         for col in self.df.columns:
             series = self.df[col].dropna().astype(str).str.strip()
             if series.empty:
                 continue
-            # If values have currency or percentage and contain digits
             has_currency_symbols = series.str.contains(r'[đ₫$€£%]', regex=True) & series.str.contains(r'\d', regex=True)
             if has_currency_symbols.sum() > len(series) * 0.3:
                 logs.append(self.apply_action('standardize_numeric', column=col))
-            # Or if it's already purely numeric strings, convert to float/int
             elif pd.to_numeric(series, errors='coerce').notna().mean() > 0.8:
                 self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
                 
-        # 3. Trim whitespace in text columns
         for col in self.df.columns:
             if self.df[col].dtype == object:
                 sample = self.df[col].dropna().astype(str)
@@ -297,54 +278,224 @@ class DataCleaner:
         return logs
 
     def detect_column_roles(self) -> Dict[str, str]:
-        """Auto-detect semantic column roles: date_col, category_col, revenue_col, profit_col, order_col, cost_col, channel_col."""
+        """
+        Auto-detect semantic column roles with expanded taxonomy:
+        gross_revenue_col, net_revenue_col, discount_col, return_col, tax_col,
+        cogs_col, operating_cost_col, profit_col, quantity_col, order_col,
+        date_col, category_col, channel_col, delivery_days_col, status_col.
+        """
         df = self.df
         roles: Dict[str, str] = {
             'date_col': '',
-            'category_col': '',
-            'revenue_col': '',
-            'profit_col': '',
             'order_col': '',
-            'cost_col': '',
-            'channel_col': ''
+            'category_col': '',
+            'channel_col': '',
+            'quantity_col': '',
+            'gross_revenue_col': '',
+            'net_revenue_col': '',
+            'discount_col': '',
+            'return_col': '',
+            'tax_col': '',
+            'cogs_col': '',
+            'operating_cost_col': '',
+            'profit_col': '',
+            'delivery_days_col': '',
+            'status_col': '',
+            # Backward-compatibility alias
+            'revenue_col': '',
+            'cost_col': ''
         }
         
+        assigned_cols = set()
+        
+        # 1. Date
         for col in df.columns:
-            col_lower = col.lower().strip()
-            # Date
-            if not roles['date_col'] and any(kw in col_lower for kw in ['ngày', 'ngay', 'date', 'thời gian', 'thoi_gian', 'time']):
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['ngày đặt', 'ngày giao', 'ngày', 'ngay_giao_dich', 'ngay', 'date', 'order_date', 'thời gian', 'time']) and col not in assigned_cols:
                 roles['date_col'] = col
-            # Order ID
-            elif not roles['order_col'] and any(kw in col_lower for kw in ['mã đơn', 'ma_don', 'order', 'vận đơn', 'van_don', 'id', 'mã']):
-                roles['order_col'] = col
-            # Revenue
-            elif not roles['revenue_col'] and any(kw in col_lower for kw in ['doanh thu', 'doanh_thu', 'revenue', 'tổng tiền', 'tong_tien', 'thành tiền', 'sales']):
-                roles['revenue_col'] = col
-            # Profit
-            elif not roles['profit_col'] and any(kw in col_lower for kw in ['lợi nhuận', 'loi_nhuan', 'profit', 'lãi', 'lai']):
-                roles['profit_col'] = col
-            # Cost
-            elif not roles['cost_col'] and any(kw in col_lower for kw in ['chi phí', 'chi_phi', 'cost', 'giá vốn', 'gia_von']):
-                roles['cost_col'] = col
-            # Product Group / Category
-            elif not roles['category_col'] and any(kw in col_lower for kw in ['nhóm sản phẩm', 'nhom_san_pham', 'sản phẩm', 'ngành hàng', 'nganh_hang', 'category', 'nhóm', 'loại']):
-                roles['category_col'] = col
-            # Channel
-            elif not roles['channel_col'] and any(kw in col_lower for kw in ['kênh', 'kenh', 'channel', 'khu vực', 'khu_vuc', 'region']):
-                roles['channel_col'] = col
+                assigned_cols.add(col)
+                break
                 
-        # Fallbacks if not found:
-        if not roles['revenue_col']:
-            # Pick first numeric column with highest sum
-            numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-            if numeric_cols:
-                sums = {c: df[c].sum() for c in numeric_cols}
-                roles['revenue_col'] = max(sums, key=sums.get)
+        # 2. Order ID
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['mã đơn', 'ma_don', 'vận đơn', 'van_don', 'order_id', 'order id', 'mã', 'id']) and col not in assigned_cols:
+                roles['order_col'] = col
+                assigned_cols.add(col)
+                break
+                
+        # 3. Category / Product Group
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['nhóm sản phẩm', 'nhom_san_pham', 'ngành hàng', 'nganh_hang', 'sản phẩm', 'category', 'product group', 'mặt hàng', 'nhóm']) and col not in assigned_cols:
+                roles['category_col'] = col
+                assigned_cols.add(col)
+                break
+                
+        # 4. Channel / Region
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['kênh bán hàng', 'kênh phân phối', 'kênh', 'kenh', 'channel', 'khu vực', 'khu_vuc', 'region']) and col not in assigned_cols:
+                roles['channel_col'] = col
+                assigned_cols.add(col)
+                break
+                
+        # 5. Quantity
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['số lượng', 'so_luong', 'quantity', 'qty']) and col not in assigned_cols:
+                roles['quantity_col'] = col
+                assigned_cols.add(col)
+                break
+
+        # 6. Discounts, Returns, Taxes
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['chiết khấu', 'giảm giá', 'chiet_khau', 'giam_gia', 'discount', 'voucher']) and col not in assigned_cols:
+                roles['discount_col'] = col
+                assigned_cols.add(col)
+                break
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['hàng trả lại', 'trả hàng', 'hoàn tiền', 'tra_hang', 'return', 'refund']) and col not in assigned_cols:
+                roles['return_col'] = col
+                assigned_cols.add(col)
+                break
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['thuế', 'thue', 'vat', 'tax']) and col not in assigned_cols:
+                roles['tax_col'] = col
+                assigned_cols.add(col)
+                break
+
+        # 7. Net Revenue vs Gross Revenue
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['doanh thu thuần', 'doanh_thu_thuan', 'net revenue', 'net_revenue']) and col not in assigned_cols:
+                roles['net_revenue_col'] = col
+                assigned_cols.add(col)
+                break
+                
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['doanh thu gộp', 'doanh thu bán hàng', 'gross revenue', 'tổng tiền', 'tong_tien', 'thành tiền', 'doanh thu', 'doanh_thu', 'sales']) and col not in assigned_cols:
+                roles['gross_revenue_col'] = col
+                assigned_cols.add(col)
+                break
+                
+        # If neither is found or only one:
+        if not roles['net_revenue_col'] and roles['gross_revenue_col']:
+            roles['net_revenue_col'] = roles['gross_revenue_col']
+        elif not roles['gross_revenue_col'] and roles['net_revenue_col']:
+            roles['gross_revenue_col'] = roles['net_revenue_col']
+            
+        roles['revenue_col'] = roles['net_revenue_col'] or roles['gross_revenue_col']
+
+        # 8. COGS (Giá vốn hàng bán) and Operating Costs
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['giá vốn', 'gia_von', 'cogs', 'chi_phi_von', 'cost of goods']) and col not in assigned_cols:
+                roles['cogs_col'] = col
+                assigned_cols.add(col)
+                break
+                
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['chi phí bán hàng', 'chi phí quản lý', 'chi phí vận hành', 'chi phí', 'chi_phi', 'phi_van_chuyen', 'operating cost', 'opex']) and col not in assigned_cols:
+                roles['operating_cost_col'] = col
+                assigned_cols.add(col)
+                break
+                
+        roles['cost_col'] = roles['cogs_col'] or roles['operating_cost_col']
+
+        # 9. Profit
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['lợi nhuận', 'loi_nhuan', 'profit', 'lãi', 'lợi nhuận thuần', 'lợi nhuận ròng', 'lợi nhuận hđkd']) and col not in assigned_cols:
+                roles['profit_col'] = col
+                assigned_cols.add(col)
+                break
+
+        # 10. Delivery days & Status
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['thời gian giao hàng', 'ngày giao', 'delivery', 'giao_hang']) and col not in assigned_cols:
+                roles['delivery_days_col'] = col
+                assigned_cols.add(col)
+                break
+                
+        for col in df.columns:
+            c_low = col.lower().strip()
+            if any(k in c_low for k in ['trạng thái', 'tình trạng', 'status', 'trang_thai']) and col not in assigned_cols:
+                roles['status_col'] = col
+                assigned_cols.add(col)
+                break
+
+        # Fallbacks for critical missing roles
+        if not roles['net_revenue_col']:
+            num_cols = [c for c in df.columns if pd.to_numeric(df[c].astype(str).str.replace(r'[\sđ₫$€£%,.]', '', regex=True), errors='coerce').notna().mean() > 0.7]
+            if num_cols:
+                roles['net_revenue_col'] = num_cols[0]
+                roles['gross_revenue_col'] = num_cols[0]
+                roles['revenue_col'] = num_cols[0]
                 
         if not roles['category_col']:
-            # Pick categorical column with 2 to 20 unique values
-            cat_cols = [c for c in df.columns if c not in roles.values() and df[c].dtype == object and 2 <= df[c].nunique() <= 20]
-            if cat_cols:
-                roles['category_col'] = cat_cols[0]
-                
+            cat_candidates = [c for c in df.columns if c not in assigned_cols and df[c].dtype == object and 2 <= df[c].nunique() <= 30]
+            if cat_candidates:
+                roles['category_col'] = cat_candidates[0]
+
         return roles
+
+    def get_column_mapping_details(self, roles: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+        """
+        Produce a structured table of column mappings with role, confidence, sample value, and formula role.
+        """
+        df = self.df
+        active_roles = roles or self.detect_column_roles()
+        
+        schema_definitions = [
+            {'key': 'net_revenue_col', 'name': 'Doanh thu thuần (Net revenue)', 'required': True, 'formula': 'Doanh thu gộp − Chiết khấu − Trả hàng − Thuế'},
+            {'key': 'gross_revenue_col', 'name': 'Doanh thu gộp (Gross revenue)', 'required': False, 'formula': 'Tổng giá trị bán trước giảm trừ'},
+            {'key': 'profit_col', 'name': 'Lợi nhuận (Profit)', 'required': False, 'formula': 'Doanh thu thuần − Giá vốn (COGS) − Chi phí vận hành'},
+            {'key': 'cogs_col', 'name': 'Giá vốn hàng bán (COGS)', 'required': False, 'formula': 'Chi phí vốn sản xuất hoặc mua vào'},
+            {'key': 'operating_cost_col', 'name': 'Chi phí vận hành / Khác', 'required': False, 'formula': 'Chi phí bán hàng, vận chuyển, quản lý'},
+            {'key': 'discount_col', 'name': 'Chiết khấu / Giảm giá', 'required': False, 'formula': 'Khoản giảm trừ doanh thu'},
+            {'key': 'return_col', 'name': 'Hàng trả lại / Hoàn tiền', 'required': False, 'formula': 'Khoản giảm trừ do hủy hoặc trả hàng'},
+            {'key': 'tax_col', 'name': 'Thuế (VAT / Thuế bán hàng)', 'required': False, 'formula': 'Khoản thuế phải nộp trong đơn giá'},
+            {'key': 'date_col', 'name': 'Ngày / Thời gian giao dịch', 'required': True, 'formula': 'Trục thời gian phân tích chu kỳ, tháng, năm'},
+            {'key': 'category_col', 'name': 'Nhóm sản phẩm / Ngành hàng', 'required': True, 'formula': 'Phân tích cơ cấu và so sánh danh mục'},
+            {'key': 'channel_col', 'name': 'Kênh bán hàng / Khu vực', 'required': False, 'formula': 'Phân bổ doanh thu và hiệu quả kênh'},
+            {'key': 'order_col', 'name': 'Mã đơn hàng / Vận đơn', 'required': False, 'formula': 'Đếm số đơn hàng độc lập, tính AOV'},
+            {'key': 'quantity_col', 'name': 'Số lượng sản phẩm bán', 'required': False, 'formula': 'Tổng sản lượng tiêu thụ'}
+        ]
+        
+        details = []
+        for defn in schema_definitions:
+            k = defn['key']
+            mapped_col = active_roles.get(k, '')
+            is_mapped = bool(mapped_col and mapped_col in df.columns)
+            sample_val = "N/A"
+            confidence = "Chưa xác định"
+            
+            if is_mapped:
+                s = df[mapped_col].dropna()
+                sample_val = str(s.iloc[0]) if not s.empty else "Rỗng"
+                if len(sample_val) > 25:
+                    sample_val = sample_val[:22] + "..."
+                confidence = "Tự động phát hiện (Cao)"
+            elif not defn['required']:
+                confidence = "Không bắt buộc (Không có trong tệp)"
+            else:
+                confidence = "Yêu cầu người dùng chọn"
+                
+            details.append({
+                'role_key': k,
+                'role_name': defn['name'],
+                'required': defn['required'],
+                'mapped_column': mapped_col if is_mapped else '',
+                'confidence': confidence,
+                'sample_value': sample_val,
+                'formula_note': defn['formula']
+            })
+            
+        return details
