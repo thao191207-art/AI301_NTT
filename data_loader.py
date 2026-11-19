@@ -144,11 +144,16 @@ def load_google_sheet_by_url(url: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
 
 def load_sample_dataset(dataset_key: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """Load sample datasets stored in data/ directory."""
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_dir = os.path.join(base_dir, 'data')
+    if not os.path.exists(data_dir):
+        data_dir = 'data'
+        
     if dataset_key == 'marketing_sales' or dataset_key == 'doanh_thu_marketing':
-        path = os.path.join('data', 'doanh_thu_marketing.csv')
+        path = os.path.join(data_dir, 'doanh_thu_marketing.csv')
         display_name = 'Doanh thu và marketing'
     elif dataset_key == 'retail_logistics' or dataset_key == 'ban_le_logistics':
-        path = os.path.join('data', 'ban_le_logistics.csv')
+        path = os.path.join(data_dir, 'ban_le_logistics.csv')
         display_name = 'Bán lẻ đa kênh & Logistics'
     else:
         raise ValueError(f"Không tìm thấy tập dữ liệu mẫu: '{dataset_key}'")
