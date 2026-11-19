@@ -244,7 +244,6 @@ def get_column_mapping_table():
         raise HTTPException(status_code=400, detail="Chưa tải tập dữ liệu.")
     mapping_details = session.cleaner.get_column_mapping_details(session.column_roles)
     return {
-        'details': mapping_details,
         'mapping_table': mapping_details,
         'column_roles': session.column_roles
     }
