@@ -1,6 +1,7 @@
 import os
 import io
 import json
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Response, Query
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
@@ -18,7 +19,7 @@ try:
     from core.cleaner import DataCleaner
     from core.analyzer import DataAnalyzer
     from core.reporter import ReportEngine
-    from core.exporter import export_to_csv, export_to_excel, export_to_pdf
+    from core.exporter import export_to_csv, export_to_excel, export_to_pdf, export_to_docx
     from core.ai_assistant import query_llm_business_advisor
 except ImportError:
     from data_loader import (
@@ -29,7 +30,7 @@ except ImportError:
     from cleaner import DataCleaner
     from analyzer import DataAnalyzer
     from reporter import ReportEngine
-    from exporter import export_to_csv, export_to_excel, export_to_pdf
+    from exporter import export_to_csv, export_to_excel, export_to_pdf, export_to_docx
     from ai_assistant import query_llm_business_advisor
 
 app = FastAPI(title="Không gian phân tích", version="1.0.0")
@@ -469,6 +470,34 @@ def export_pdf_file():
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="Bao_cao_Khong_gian_phan_tich.pdf"'}
+    )
+
+@app.get("/api/export/docx")
+@app.get("/api/export/word")
+def export_word_report_file():
+    """Download AI-written Word business report (.docx)."""
+    if session.cleaned_df is None or session.cleaned_df.empty:
+        raise HTTPException(status_code=400, detail="Chưa có dữ liệu làm sạch.")
+    if session.last_dashboard_cache is None:
+        if session.report_engine:
+            session.last_dashboard_cache = session.report_engine.compute_dashboard()
+        else:
+            raise HTTPException(status_code=400, detail="Chưa có báo cáo phân tích.")
+            
+    summary_strip = session.report_engine.compute_summary_strip() if session.report_engine else []
+    audit = session.cleaner.audit_log if session.cleaner else []
+    col_roles = session.column_roles if session.column_roles else (session.cleaner.detect_column_roles() if session.cleaner else {})
+    docx_bytes = export_to_docx(session.last_dashboard_cache, summary_strip, session.business_context, audit, col_roles)
+    
+    biz_type = (session.business_context or {}).get('business_type', 'retail')
+    loai_hinh = "BanLe" if biz_type == 'retail' else "B2B"
+    date_str = datetime.now().strftime("%Y%m%d")
+    fname = f"BaoCao_{loai_hinh}_{date_str}.docx"
+    
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'}
     )
 
 @app.post("/api/step/navigate")
